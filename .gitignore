@@ -1,3 +1,5 @@
 *.pyc
 *.xlsx
+*.csv
+*.log
 output
