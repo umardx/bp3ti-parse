@@ -49,7 +49,7 @@ def loadPING(file):
 
 def selaluMati(dataUPS):
 	for i, _ in dataUPS.iterrows():
-		if (dataUPS.Downtime[i] != 100) and (dataUPS.Downtime[i] != -1000):
+		if (dataUPS.Downtime[i] != 100) or (dataUPS.Downtime[i] != -1000):
 			return False
 			break
 	return True
@@ -78,7 +78,7 @@ def hitungNormal(jData):
 	jData['Restitusi'] = numpy.NaN
 	
 	# Kategori OK
-	jData.loc[(jData.PINGDowntime == 0) & (jData.UPSDowntime == 0) & (jData.VInput > 0),
+	jData.loc[(jData.PINGDowntime == 0) & (jData.UPSDowntime == 0),
 	'Kategori'] = "OK"
 	jData.loc[jData.Kategori == "OK", 'Restitusi'] = 0
 
@@ -88,31 +88,21 @@ def hitungNormal(jData):
 	jData.loc[jData.Kategori == "Link", 'Restitusi'] = (jData.PINGDowntime*300/100)
 
 	# Kategori Non-Link (Ragu bisa jalan)
-	jData.loc[((jData.Status.shift(-1) == "OFF") & (jData.Status == "Unknown") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0))
-	| ((jData.PINGDowntime == 100) & (jData.UPSDowntime == 100))
-	| ((jData.Kategori.shift(-1) == "Non-Link") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)),
-	'Kategori'] = "Non-Link"
-	jData.loc[((jData.Status.shift(-1) == "OFF") & (jData.Status == "Unknown") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0))
-	| ((jData.PINGDowntime == 100) & (jData.UPSDowntime == 100))
-	| ((jData.Kategori.shift(-1) == "Non-Link") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)),
-	'Kategori'] = "Non-Link"
+	for i in xrange(2):
+		jData.loc[((jData.Status.shift(-1) == "OFF") & (jData.Status == "Unknown") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)) | ((jData.PINGDowntime == 100) & (jData.UPSDowntime == 100)) | ((jData.Kategori.shift(-1) == "Non-Link") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)), 'Kategori'] = "Non-Link"
+
 	jData.loc[jData.Kategori == "Non-Link", 'Restitusi'] = 0
 
 	# Kategori Bypass
-	jData.loc[((jData.PINGDowntime == 0) & (jData.UPSDowntime > 0))
-	| ((jData.PINGDowntime > 0) & (jData.PINGDowntime < 100) & (jData.UPSDowntime == 100))
-	| ((jData.PINGDowntime > 0) & (jData.UPSDowntime >0 ) & (jData.Kategori.shift(-1) == "Bypass")),
-	'Kategori'] = "Bypass"
-	jData.loc[((jData.PINGDowntime == 0) & (jData.UPSDowntime > 0))
-	| ((jData.PINGDowntime > 0) & (jData.PINGDowntime < 100) & (jData.UPSDowntime == 100))
-	| ((jData.PINGDowntime > 0) & (jData.UPSDowntime >0 ) & (jData.Kategori.shift(-1) == "Bypass")),
-	'Kategori'] = "Bypass"
+	for i in xrange(2):
+		jData.loc[((jData.PINGDowntime == 0) & (jData.UPSDowntime > 0)) | ((jData.PINGDowntime > 0) & (jData.PINGDowntime < 100) & (jData.UPSDowntime == 100)) | ((jData.PINGDowntime > 0) & (jData.UPSDowntime > 0 ) & (jData.Kategori.shift(-1) == "Bypass")), 'Kategori'] = "Bypass"
 
+	jData.loc[jData.Kategori == "Bypass", 'Restitusi'] = (jData.PINGDowntime*300/100)
 	return jData
 
 def hitungBulan(data_lokasi, i, fileUPS, filePING):
-	# if ((data_lokasi.LOKASI[i] == "BLK DISNAKER ACEH SINGKIL")
-	# 	and (fileUPS == "ISP Aplikanusa Lintasarta/ups/out/7720/2017-03-01-00-00-00_2017-04-01-00-00-00.csv")):
+	if ((data_lokasi.LOKASI[i] == "BLK DISNAKER ACEH SINGKIL")
+		and (fileUPS == "ISP Aplikanusa Lintasarta/ups/out/7720/2017-03-01-00-00-00_2017-04-01-00-00-00.csv")):
 		print "Proccessing....."
 		print "Lokasi:{}".format(data_lokasi.LOKASI[i])
 		print "UPS:{} PING:{}".format(fileUPS, filePING)
