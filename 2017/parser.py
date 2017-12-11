@@ -2,6 +2,8 @@
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Protection, Font
 from openpyxl import Workbook
 from datetime import datetime
+import datetime
+import time
 import pandas
 import numpy
 import logging
@@ -12,8 +14,32 @@ def prtgToUnix(prtgDate):
 	return result
 
 def unixToDate(unix):
-	result = datetime.fromtimestamp(unix)
+	try:
+		result = datetime.fromtimestamp(unix)
+	except:
+		result = numpy.NaN
 	return result
+
+def dateToUnix(date):
+	try:
+		result = time.mktime(datetime.datetime.strptime(date, "%d/%m/%Y").timetuple())
+	except:
+		result = numpy.NaN
+	return result
+
+def toINT(float):
+	try:
+		result = int(float)
+	except:
+		result = numpy.NaN
+	return result
+
+def fileUPStoBln(val):
+	val = val.split('/')[3]
+	val = val.split('_')[0]
+	val = val.split('-')[1]
+	val = int(val)
+	return val
 
 def log(message):
 	logging.basicConfig(
@@ -23,8 +49,13 @@ def log(message):
 		datefmt='%m/%d/%Y %I:%M:%S %p')
 	logging.info(message)
 
-def loadCSV(file):
+def loadDataLokasi(file):
 	result = pandas.read_csv(file)
+	result['STARTDATE'] = result['STARTDATE'].map(dateToUnix)
+	result['STARTDATE'] = result['STARTDATE'].fillna(-1000).astype(numpy.float64)
+	result['CHANGEDATE'] = result['CHANGEDATE'].map(dateToUnix)
+	result['CHANGEDATE'] = result['CHANGEDATE'].fillna(-1000).astype(numpy.float64)
+	result['CHANGEUPSID'] = result['CHANGEUPSID'].fillna(-1000).astype(numpy.int64)
 	return result
 
 def loadUPS(file, ISP):
@@ -60,10 +91,23 @@ def statusBaterai(dataUPS):
 	dataUPS.loc[(dataUPS.Downtime == 0) & (dataUPS.VInput == -1000), 'Status'] = "Unknown"
 	return dataUPS
 
-def joinData(dataUPS, dataPING):
-	result = pandas.merge(dataUPS, dataPING, on='Timestamp', how='outer')
-	result.columns = ["Timestamp", "VInput", "UPSDowntime", "Status", "PINGDowntime"]
+def joinData(dataUPS, dataPING, dataUPS2, CHANGEDATE):
+	try:
+		result = pandas.merge(dataUPS, dataPING, on='Timestamp', how='outer')
+		result.columns = ["Timestamp", "VInput", "UPSDowntime", "Status", "PINGDowntime"]
+		result.loc[(result.Timestamp >= CHANGEDATE), 'VInput'] = dataUPS2.VInput
+		result.loc[(result.Timestamp >= CHANGEDATE), 'UPSDowntime'] = dataUPS2.Downtime
+	except:
+		result = pandas.merge(dataUPS, dataPING, on='Timestamp', how='outer')
+		result.columns = ["Timestamp", "VInput", "UPSDowntime", "Status", "PINGDowntime"]
 	return result
+
+def writeToExcel(data):
+	pass
+	# writer = pandas.ExcelWriter('output.xlsx', index=False)
+	# jData.to_excel(writer,'Sheet1')
+	# dataUPS.to_excel(writer,'Sheet2')
+	# writer.save()
 
 def hitungSelaluMati(jData):
 	jData['Restitusi'] = numpy.NaN
@@ -100,59 +144,65 @@ def hitungNormal(jData):
 	jData.loc[jData.Kategori == "Bypass", 'Restitusi'] = (jData.PINGDowntime*300/100)
 	return jData
 
-def hitungBulan(data_lokasi, i, fileUPS, filePING):
-	if ((data_lokasi.LOKASI[i] == "BLK DISNAKER ACEH SINGKIL")
-		and (fileUPS == "ISP Aplikanusa Lintasarta/ups/out/7720/2017-03-01-00-00-00_2017-04-01-00-00-00.csv")):
-		print "Proccessing....."
-		print "Lokasi:{}".format(data_lokasi.LOKASI[i])
-		print "UPS:{} PING:{}".format(fileUPS, filePING)
-		print ""
+def hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2):
+	if ((data_lokasi.LOKASI[i] == "SMP NEGERI 1 KUALA BATEE")):
+		if (data_lokasi.CHANGEDATE[i] > 0):
+			dataUPS2 = loadUPS(fileUPS2, data_lokasi.ISP[i])
 		dataUPS = loadUPS(fileUPS, data_lokasi.ISP[i])
 		dataPING = loadPING(filePING)
 		dataUPS = statusBaterai(dataUPS)
-		jData = joinData(dataUPS, dataPING)
+		jData = joinData(dataUPS, dataPING, dataUPS2, data_lokasi.CHANGEDATE[i])
+		print "File: {}".format(fileUPS)
 		if selaluMati(dataUPS):
-			print "Selalu Mati"
-			hitungSelaluMati(jData)
+			print "SELALU MATI"
+			jData = hitungSelaluMati(jData)
 		else:
-			print "Normal"
+			print "NORMAL"
 			jData = hitungNormal(jData)
-			print jData
-			writer = pandas.ExcelWriter('output.xlsx', index=False)
-			jData.to_excel(writer,'Sheet1')
-			dataUPS.to_excel(writer,'Sheet2')
-			writer.save()
+		bulan = fileUPStoBln(fileUPS)
+		SUMRestitusi = jData['Restitusi'].sum()
+		SLA = (1-(SUMRestitusi/(jData['Timestamp'].iloc[-1] - jData['Timestamp'].iloc[0])))*100
+		writeToExcel(jData)
+		return bulan, SUMRestitusi, SLA
 
-def iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, fileListPING, fileListUPS, i):
+def iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, dirPathUPS2, fileListPING, fileListUPS, fileListUPS2, i):
+	result = pandas.DataFrame(index=range(1,13), columns=['Restitusi', 'SLA'])
 	if (len(fileListUPS) == len(fileListPING)):
 		for idx in range(0, len(fileListPING)):
 			try:
+				if (data_lokasi.CHANGEDATE[i] > 0):
+					fileUPS2 = str(dirPathUPS2 + "/" + fileListUPS2[idx])
 				fileUPS = str(dirPathUPS + "/" + fileListUPS[idx])
 				filePING = str(dirPathPING + "/" + fileListPING[idx])
-				hitungBulan(data_lokasi, i, fileUPS, filePING)
+				bulan, SUMRestitusi, SLA = hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2)
+				result['Restitusi'].iloc[bulan-1] = SUMRestitusi
+				result['SLA'].iloc[bulan-1] = SLA
 			except:
-				message = str("Error while read: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i] + ", UPS: " + fileListUPS[idx] + " or " + fileListPING[idx])
+				message = str("Error2 while read: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i] + ", UPS: " + fileListUPS[idx] + " or " + fileListPING[idx])
 				log(message)
 	else:
 		message = "Jumlah fileListPING != fileListUPS"
 		log(message)
-
+	return result
 
 def iterDataLokasi(data_lokasi):
 	for i, _ in data_lokasi.iterrows():
 		try:
-			dirPathPING = str(data_lokasi.ISP[i] + "/ping/out/" + str(data_lokasi.PINGID[i]))
-			dirPathUPS = str(data_lokasi.ISP[i] + "/ups/out/" + str(data_lokasi.UPSID[i]))
+			if (data_lokasi.CHANGEDATE[i] > 0):
+				dirPathUPS2 = str(data_lokasi.ISP[i] + "/ups/" + str(data_lokasi.CHANGEUPSID[i]))
+				fileListUPS2 = os.listdir(dirPathUPS2)
+			dirPathPING = str(data_lokasi.ISP[i] + "/ping/" + str(data_lokasi.PINGID[i]))
+			dirPathUPS = str(data_lokasi.ISP[i] + "/ups/" + str(data_lokasi.UPSID[i]))
 			fileListPING = os.listdir(dirPathPING)
 			fileListUPS = os.listdir(dirPathUPS)
+			DATA = iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, dirPathUPS2, fileListPING, fileListUPS, fileListUPS2, i)
+			print DATA
 		except:
-			message = str("Error while read: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i])
+			message = str("Error1 while read (Data Not Exists): " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i])
 			log(message)
 			continue
-		iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, fileListPING, fileListUPS, i)
-
 def main():
-	data_lokasi = loadCSV("data_lokasi.csv")
+	data_lokasi = loadDataLokasi("data_lokasi.csv")
 	iterDataLokasi(data_lokasi)
 
 if __name__ == "__main__":
