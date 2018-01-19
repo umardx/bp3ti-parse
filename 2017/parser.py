@@ -1,5 +1,4 @@
 #!/usr/bin/python
-from openpyxl.styles import PatternFill, Border, Side, Alignment, Protection, Font
 from openpyxl import Workbook
 from datetime import datetime
 import datetime
@@ -9,13 +8,20 @@ import numpy
 import logging
 import os, os.path, sys
 
+def toNaN(val):
+	if (val == -1000):
+		result = numpy.NaN
+	else:
+		result = val
+	return result
+
 def prtgToUnix(prtgDate):
 	result = (prtgDate-25569)*86400
 	return result
 
 def unixToDate(unix):
 	try:
-		result = datetime.fromtimestamp(unix)
+		result = datetime.datetime.fromtimestamp(float(unix)).strftime('%Y-%m-%d %H:%M:%S')
 	except:
 		result = numpy.NaN
 	return result
@@ -34,12 +40,12 @@ def toINT(float):
 		result = numpy.NaN
 	return result
 
-def fileUPStoBln(val):
+def fileUPStoBlnThn(val):
 	val = val.split('/')[3]
 	val = val.split('_')[0]
-	val = val.split('-')[1]
-	val = int(val)
-	return val
+	val0 = int(val.split('-')[0])
+	val1 = int(val.split('-')[1])
+	return val0, val1
 
 def log(message):
 	logging.basicConfig(
@@ -59,9 +65,9 @@ def loadDataLokasi(file):
 	return result
 
 def loadUPS(file, ISP):
-	if (ISP == "ISP Iforte Global Internet"):
+	try:
 		result = pandas.read_csv(file, usecols=["Date Time(RAW)", "ups high prec input line voltage(RAW)", "Downtime(RAW)"])
-	else:
+	except:
 		result = pandas.read_csv(file, usecols=["Date Time(RAW)", "Value(RAW)", "Downtime(RAW)"])
 	result.columns = ["Timestamp", "VInput", "Downtime"]
 	result['Timestamp'] = result['Timestamp'].map(prtgToUnix)
@@ -80,7 +86,14 @@ def loadPING(file):
 
 def selaluMati(dataUPS):
 	for i, _ in dataUPS.iterrows():
-		if (dataUPS.Downtime[i] != 100) or (dataUPS.Downtime[i] != -1000):
+		if (dataUPS.Downtime[i] == 0):
+			return False
+			break
+	return True
+
+def semuaNull(dataPING):
+	for i, _ in dataPING.iterrows():
+		if (dataPING.Downtime[i] != -1000):
 			return False
 			break
 	return True
@@ -92,22 +105,15 @@ def statusBaterai(dataUPS):
 	return dataUPS
 
 def joinData(dataUPS, dataPING, dataUPS2, CHANGEDATE):
-	try:
+	if (CHANGEDATE > 0):
 		result = pandas.merge(dataUPS, dataPING, on='Timestamp', how='outer')
 		result.columns = ["Timestamp", "VInput", "UPSDowntime", "Status", "PINGDowntime"]
 		result.loc[(result.Timestamp >= CHANGEDATE), 'VInput'] = dataUPS2.VInput
 		result.loc[(result.Timestamp >= CHANGEDATE), 'UPSDowntime'] = dataUPS2.Downtime
-	except:
+	else:
 		result = pandas.merge(dataUPS, dataPING, on='Timestamp', how='outer')
 		result.columns = ["Timestamp", "VInput", "UPSDowntime", "Status", "PINGDowntime"]
 	return result
-
-def writeToExcel(data):
-	pass
-	# writer = pandas.ExcelWriter('output.xlsx', index=False)
-	# jData.to_excel(writer,'Sheet1')
-	# dataUPS.to_excel(writer,'Sheet2')
-	# writer.save()
 
 def hitungSelaluMati(jData):
 	jData['Restitusi'] = numpy.NaN
@@ -124,86 +130,152 @@ def hitungNormal(jData):
 	# Kategori OK
 	jData.loc[(jData.PINGDowntime == 0) & (jData.UPSDowntime == 0),
 	'Kategori'] = "OK"
-	jData.loc[jData.Kategori == "OK", 'Restitusi'] = 0
 
 	# Kategori Link
 	jData.loc[((jData.PINGDowntime > 0) & (jData.UPSDowntime == 0)) | ((jData.PINGDowntime > 0) & (jData.UPSDowntime == -1000)),
 	'Kategori'] = "Link"
-	jData.loc[jData.Kategori == "Link", 'Restitusi'] = (jData.PINGDowntime*300/100)
 
 	# Kategori Non-Link (Ragu bisa jalan)
-	for i in xrange(2):
-		jData.loc[((jData.Status.shift(-1) == "OFF") & (jData.Status == "Unknown") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)) | ((jData.PINGDowntime == 100) & (jData.UPSDowntime == 100)) | ((jData.Kategori.shift(-1) == "Non-Link") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)), 'Kategori'] = "Non-Link"
-
-	jData.loc[jData.Kategori == "Non-Link", 'Restitusi'] = 0
+	#for i in xrange(2):
+	jData.loc[((jData.Status.shift(-1) == "OFF") & (jData.Status == "Unknown") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)) | ((jData.Kategori.shift(-1) == "Non-Link") & (jData.PINGDowntime > 0) & (jData.UPSDowntime > 0)), 'Kategori'] = "Non-Link"
 
 	# Kategori Bypass
-	for i in xrange(2):
-		jData.loc[((jData.PINGDowntime == 0) & (jData.UPSDowntime > 0)) | ((jData.PINGDowntime > 0) & (jData.PINGDowntime < 100) & (jData.UPSDowntime == 100)) | ((jData.PINGDowntime > 0) & (jData.UPSDowntime > 0 ) & (jData.Kategori.shift(-1) == "Bypass")), 'Kategori'] = "Bypass"
+	#for i in xrange(2):
+	jData.loc[((jData.PINGDowntime == 0) & (jData.UPSDowntime > 0)) | ((jData.PINGDowntime > 0) & (jData.PINGDowntime < 100) & (jData.UPSDowntime == 100)) | ((jData.PINGDowntime > 0) & (jData.UPSDowntime > 0 ) & (jData.Kategori.shift(-1) == "Bypass")), 'Kategori'] = "Bypass"
 
+	for i, _ in jData.iterrows():
+		if (i>0):
+			v = i-1
+			if ((jData.UPSDowntime[i] > 0) and (jData.PINGDowntime[i] > 0)):
+				if (jData.Kategori[v] == "Bypass"):
+					jData.iloc[i, jData.columns.get_loc('Kategori')] = "Bypass"
+				if (jData.Kategori[v] == "Non-Link"):
+					jData.iloc[i, jData.columns.get_loc('Kategori')] = "Non-Link"
+
+	jData.loc[jData.Kategori == "OK", 'Restitusi'] = 0
+	jData.loc[jData.Kategori == "Link", 'Restitusi'] = (jData.PINGDowntime*300/100)
+	jData.loc[jData.Kategori == "Non-Link", 'Restitusi'] = 0
 	jData.loc[jData.Kategori == "Bypass", 'Restitusi'] = (jData.PINGDowntime*300/100)
 	return jData
 
 def hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2):
-	if ((data_lokasi.LOKASI[i] == "SMP NEGERI 1 KUALA BATEE")):
-		if (data_lokasi.CHANGEDATE[i] > 0):
-			dataUPS2 = loadUPS(fileUPS2, data_lokasi.ISP[i])
-		dataUPS = loadUPS(fileUPS, data_lokasi.ISP[i])
-		dataPING = loadPING(filePING)
-		dataUPS = statusBaterai(dataUPS)
-		jData = joinData(dataUPS, dataPING, dataUPS2, data_lokasi.CHANGEDATE[i])
-		print "File: {}".format(fileUPS)
-		if selaluMati(dataUPS):
-			print "SELALU MATI"
-			jData = hitungSelaluMati(jData)
-		else:
-			print "NORMAL"
-			jData = hitungNormal(jData)
-		bulan = fileUPStoBln(fileUPS)
-		SUMRestitusi = jData['Restitusi'].sum()
-		SLA = (1-(SUMRestitusi/(jData['Timestamp'].iloc[-1] - jData['Timestamp'].iloc[0])))*100
-		writeToExcel(jData)
-		return bulan, SUMRestitusi, SLA
+	dataUPS = loadUPS(fileUPS, data_lokasi.ISP[i])
+	dataPING = loadPING(filePING)
+	dataUPS = statusBaterai(dataUPS)
+	if (data_lokasi.CHANGEDATE[i] > 0):
+		print "============="
+		print "CHANGEDATE"
+		dataUPS2 = loadUPS(fileUPS2, data_lokasi.ISP[i])
+	else:
+		dataUPS2 = ""
+	jData = joinData(dataUPS, dataPING, dataUPS2, data_lokasi.CHANGEDATE[i])
+	print "File: {}".format(fileUPS)
+	if selaluMati(dataUPS):
+		print "SELALU MATI"
+		if semuaNull(dataPING):
+			print "SEMUA NULL"
+		jData = hitungSelaluMati(jData)
+	else:
+		print "NORMAL"
+		jData = hitungNormal(jData)
+	tahun, bulan = fileUPStoBlnThn(fileUPS)
+	SUMRestitusi = jData['Restitusi'].sum()
+	# if (bulan == 1):
+	# 	aawriter = pandas.ExcelWriter('DETAILS.xlsx')
+	# 	jData.to_excel(aawriter,'Sheet1', index=False)
+	# 	aawriter.save()
+	SLA = (1-(SUMRestitusi/(jData['Timestamp'].iloc[-1] - jData['Timestamp'].iloc[0])))*100
+	return tahun, bulan, SUMRestitusi, SLA
 
 def iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, dirPathUPS2, fileListPING, fileListUPS, fileListUPS2, i):
-	result = pandas.DataFrame(index=range(1,13), columns=['Restitusi', 'SLA'])
+	result = pandas.DataFrame(index=range(1,13), columns=['Tahun', 'Bulan', 'Restitusi', 'SLA'])
 	if (len(fileListUPS) == len(fileListPING)):
 		for idx in range(0, len(fileListPING)):
+			if (data_lokasi.CHANGEDATE[i] > 0):
+				fileUPS2 = str(dirPathUPS2 + "/" + fileListUPS2[idx])
+			else:
+				fileUPS2 = ""
+
+			fileUPS = str(dirPathUPS + "/" + fileListUPS[idx])
+			filePING = str(dirPathPING + "/" + fileListPING[idx])
 			try:
-				if (data_lokasi.CHANGEDATE[i] > 0):
-					fileUPS2 = str(dirPathUPS2 + "/" + fileListUPS2[idx])
-				fileUPS = str(dirPathUPS + "/" + fileListUPS[idx])
-				filePING = str(dirPathPING + "/" + fileListPING[idx])
-				bulan, SUMRestitusi, SLA = hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2)
-				result['Restitusi'].iloc[bulan-1] = SUMRestitusi
-				result['SLA'].iloc[bulan-1] = SLA
+				tahun, bulan, SUMRestitusi, SLA = hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2)
+				result['Tahun'].iloc[bulan-1] = tahun
+				result['Bulan'].iloc[bulan-1] = bulan
+				result['Restitusi'].iloc[bulan-1] = round(SUMRestitusi, 0)
+				result['SLA'].iloc[bulan-1] = round(SLA, 2)
 			except:
-				message = str("Error2 while read: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i] + ", UPS: " + fileListUPS[idx] + " or " + fileListPING[idx])
-				log(message)
+				# message = str("Error2 while read: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i] + ", UPS: " + fileListUPS[idx] + " or PING: " + fileListPING[idx])
+				# log(message)
+				tahun, bulan = fileUPStoBlnThn(fileUPS)
+				result['Tahun'].iloc[bulan-1] = numpy.NaN
+				result['Bulan'].iloc[bulan-1] = numpy.NaN
+				result['Restitusi'].iloc[bulan-1] = numpy.NaN
+				result['SLA'].iloc[bulan-1] = numpy.NaN
 	else:
 		message = "Jumlah fileListPING != fileListUPS"
 		log(message)
 	return result
 
 def iterDataLokasi(data_lokasi):
+	result = data_lokasi
+	for col in range(1,13):
+		_Restitusi = "Restitusi_Bulan_"
+		_Restitusi += str(col)
+		_SLA = "SLA_Bulan_"
+		_SLA += str(col)
+		result[_Restitusi] = numpy.NaN
+		result[_SLA] = numpy.NaN
+
 	for i, _ in data_lokasi.iterrows():
+		# if data_lokasi.LOKASI[i] == "KANTOR DESA NGADU OLU":
 		try:
 			if (data_lokasi.CHANGEDATE[i] > 0):
 				dirPathUPS2 = str(data_lokasi.ISP[i] + "/ups/" + str(data_lokasi.CHANGEUPSID[i]))
 				fileListUPS2 = os.listdir(dirPathUPS2)
+			else:
+				dirPathUPS2 = ""
+				fileListUPS2 = [""]
+
 			dirPathPING = str(data_lokasi.ISP[i] + "/ping/" + str(data_lokasi.PINGID[i]))
 			dirPathUPS = str(data_lokasi.ISP[i] + "/ups/" + str(data_lokasi.UPSID[i]))
 			fileListPING = os.listdir(dirPathPING)
 			fileListUPS = os.listdir(dirPathUPS)
+
+			# Tabel Restitusi | SLA untuk 12 bulan
 			DATA = iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, dirPathUPS2, fileListPING, fileListUPS, fileListUPS2, i)
-			print DATA
+			
+			if (data_lokasi.STARTDATE[i] > 0):
+				_tahun = int(datetime.datetime.fromtimestamp(float(data_lokasi.STARTDATE[i])).strftime('%Y'))
+				_bulan = int(datetime.datetime.fromtimestamp(float(data_lokasi.STARTDATE[i])).strftime('%m'))
+				DATA.loc[(DATA.Tahun == _tahun) & (DATA.Bulan < _bulan), 'Restitusi'] = numpy.NaN
+				DATA.loc[(DATA.Tahun == _tahun) & (DATA.Bulan < _bulan), 'SLA'] = numpy.NaN
+
+			for col in range(1,13):
+				_Restitusi = "Restitusi_Bulan_"
+				_Restitusi += str(col)
+				_SLA = "SLA_Bulan_"
+				_SLA += str(col)
+				result.loc[i, _Restitusi] = DATA.Restitusi[col]
+				result.loc[i, _SLA] = DATA.SLA[col]
 		except:
-			message = str("Error1 while read (Data Not Exists): " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i])
+			message = str("Error1 while read (Data Not Exists - SKIP): " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i])
 			log(message)
 			continue
+	return result
+
 def main():
 	data_lokasi = loadDataLokasi("data_lokasi.csv")
-	iterDataLokasi(data_lokasi)
+	hasil = iterDataLokasi(data_lokasi)
+	hasil['STARTDATE'] = hasil['STARTDATE'].map(unixToDate)
+	hasil['STARTDATE'] = hasil['STARTDATE'].map(toNaN)
+	hasil['CHANGEDATE'] = hasil['CHANGEDATE'].map(unixToDate)
+	hasil['CHANGEDATE'] = hasil['CHANGEDATE'].map(toNaN)
+	hasil['CHANGEUPSID'] = hasil['CHANGEUPSID'].map(toNaN)
+
+	writer = pandas.ExcelWriter('OUT.xlsx')
+	hasil.to_excel(writer,'Sheet1', index=False)
+	writer.save()
 
 if __name__ == "__main__":
 	main()
