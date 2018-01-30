@@ -151,11 +151,16 @@ def hitungNormal(jData):
 					jData.iloc[i, jData.columns.get_loc('Kategori')] = "Bypass"
 				if (jData.Kategori[v] == "Non-Link"):
 					jData.iloc[i, jData.columns.get_loc('Kategori')] = "Non-Link"
+			if (jData.UPSDowntime[i] == -1000) or (jData.PINGDowntime[i] == -1000):
+				if (jData.Kategori[v] == "Bypass"):
+					jData.iloc[i, jData.columns.get_loc('Kategori')] = "Bypass"
+				if (jData.Kategori[v] == "Non-Link"):
+					jData.iloc[i, jData.columns.get_loc('Kategori')] = "Non-Link"
 
 	jData.loc[jData.Kategori == "OK", 'Restitusi'] = 0
-	jData.loc[jData.Kategori == "Link", 'Restitusi'] = (jData.PINGDowntime*300/100)
+	jData.loc[((jData.Kategori == "Link") & (jData.PINGDowntime >= 0)), 'Restitusi'] = (jData.PINGDowntime*300/100)
 	jData.loc[jData.Kategori == "Non-Link", 'Restitusi'] = 0
-	jData.loc[jData.Kategori == "Bypass", 'Restitusi'] = (jData.PINGDowntime*300/100)
+	jData.loc[((jData.Kategori == "Bypass") & (jData.PINGDowntime >= 0)), 'Restitusi'] = (jData.PINGDowntime*300/100)
 	return jData
 
 def hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2):
@@ -163,8 +168,6 @@ def hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2):
 	dataPING = loadPING(filePING)
 	dataUPS = statusBaterai(dataUPS)
 	if (data_lokasi.CHANGEDATE[i] > 0):
-		print "============="
-		print "CHANGEDATE"
 		dataUPS2 = loadUPS(fileUPS2, data_lokasi.ISP[i])
 	else:
 		dataUPS2 = ""
@@ -180,11 +183,13 @@ def hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2):
 		jData = hitungNormal(jData)
 	tahun, bulan = fileUPStoBlnThn(fileUPS)
 	SUMRestitusi = jData['Restitusi'].sum()
-	# if (bulan == 1):
-	# 	aawriter = pandas.ExcelWriter('DETAILS.xlsx')
-	# 	jData.to_excel(aawriter,'Sheet1', index=False)
-	# 	aawriter.save()
-	SLA = (1-(SUMRestitusi/(jData['Timestamp'].iloc[-1] - jData['Timestamp'].iloc[0])))*100
+
+	# if (bulan == 2):
+	# 	temp_writer = pandas.ExcelWriter('DETAILS.xlsx')
+	# 	jData.to_excel(temp_writer,'Sheet1', index=False)
+	# 	temp_writer.save()
+	SLA = (1-(SUMRestitusi/((jData['Timestamp'].iloc[-1] - jData['Timestamp'].iloc[0]))))*100
+	print "SLA: {}, SUMRestitusi: {}".format(SLA, SUMRestitusi)
 	return tahun, bulan, SUMRestitusi, SLA
 
 def iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, dirPathUPS2, fileListPING, fileListUPS, fileListUPS2, i):
@@ -198,20 +203,25 @@ def iterDataBulan(data_lokasi, dirPathPING, dirPathUPS, dirPathUPS2, fileListPIN
 
 			fileUPS = str(dirPathUPS + "/" + fileListUPS[idx])
 			filePING = str(dirPathPING + "/" + fileListPING[idx])
+
+			tahun, bulan, SUMRestitusi, SLA = hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2)
+
 			try:
-				tahun, bulan, SUMRestitusi, SLA = hitungBulan(data_lokasi, i, fileUPS, filePING, fileUPS2)
 				result['Tahun'].iloc[bulan-1] = tahun
 				result['Bulan'].iloc[bulan-1] = bulan
 				result['Restitusi'].iloc[bulan-1] = round(SUMRestitusi, 0)
 				result['SLA'].iloc[bulan-1] = round(SLA, 2)
 			except:
-				# message = str("Error2 while read: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i] + ", UPS: " + fileListUPS[idx] + " or PING: " + fileListPING[idx])
-				# log(message)
+				print "bulan : {}".format(bulan)
 				tahun, bulan = fileUPStoBlnThn(fileUPS)
 				result['Tahun'].iloc[bulan-1] = numpy.NaN
 				result['Bulan'].iloc[bulan-1] = numpy.NaN
 				result['Restitusi'].iloc[bulan-1] = numpy.NaN
 				result['SLA'].iloc[bulan-1] = numpy.NaN
+				
+				message = str("Error while read ISP: " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i]) + ", Bulan: " + str(bulan)
+				log(message)
+				continue
 	else:
 		message = "Jumlah fileListPING != fileListUPS"
 		log(message)
@@ -228,7 +238,7 @@ def iterDataLokasi(data_lokasi):
 		result[_SLA] = numpy.NaN
 
 	for i, _ in data_lokasi.iterrows():
-		# if data_lokasi.LOKASI[i] == "KANTOR DESA NGADU OLU":
+		# if data_lokasi.LOKASI[i] == "SMP KOUH":
 		try:
 			if (data_lokasi.CHANGEDATE[i] > 0):
 				dirPathUPS2 = str(data_lokasi.ISP[i] + "/ups/" + str(data_lokasi.CHANGEUPSID[i]))
@@ -259,7 +269,7 @@ def iterDataLokasi(data_lokasi):
 				result.loc[i, _Restitusi] = DATA.Restitusi[col]
 				result.loc[i, _SLA] = DATA.SLA[col]
 		except:
-			message = str("Error1 while read (Data Not Exists - SKIP): " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i])
+			message = str("Error while read (Data Not Exists - SKIP): " + data_lokasi.ISP[i] + ", Lokasi: " + data_lokasi.LOKASI[i])
 			log(message)
 			continue
 	return result
