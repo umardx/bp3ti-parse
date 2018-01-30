@@ -1,11 +1,11 @@
 #!/bin/bash
 
 dir_out="out"
-hostName="202.43.73.155"
+hostName="202.xx.xx.xx"
 inputSensor="sensors.csv"
 
-username="prtguser"
-password="Bp3t1OK!"
+username="userrrrrrr"
+password="passssssss"
 
 while IFS='' read -r line || [[ -n "$line" ]]; do
 	if [ ${#line} -le 2 ]; then
