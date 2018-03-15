@@ -1,6 +1,6 @@
 # bp3ti-parse
 
-## Install the dependencies
+## Install python dependencies
 ```
 pip install openpyxl pandas numpy
 ```
